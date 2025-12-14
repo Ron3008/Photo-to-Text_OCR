@@ -101,20 +101,28 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
 # ==============================================================================
 
 def preprocess_image(image: Image.Image):
-    target_width = 128
+    # KOREKSI: Gunakan Dimensi Colab (W=256)
+    target_width = 256
     target_height = 32
     
-    # 1. Resize (sesuai saat training)
+    # 1. Resize
     image = image.resize((target_width, target_height))
     
-    # 2. To NumPy Array dan Normalisasi (RGB: H, W, C)
+    # 2. Grayscale lalu ubah ke RGB (sesuai transforms.Grayscale(num_output_channels=3) di Colab)
+    image = image.convert('L').convert('RGB')
+    
+    # 3. To NumPy Array dan Normalisasi (RGB: H, W, C)
     image_array = np.array(image, dtype=np.float32) / 255.0 
     
-    # 3. Transpose ke PyTorch (C, H, W)
+    # 4. Transpose ke PyTorch (C, H, W)
     image_array = image_array.transpose((2, 0, 1)) 
     
-    # 4. To Tensor dan Tambahkan Batch Dimension
-    # Output: [1, C=3, H=32, W=128]
+    # 5. Normalisasi ke [-1, 1] (sesuai transforms.Normalize(mean=0.5, std=0.5) di Colab)
+    mean = np.array([0.5, 0.5, 0.5]).reshape(-1, 1, 1)
+    std = np.array([0.5, 0.5, 0.5]).reshape(-1, 1, 1)
+    image_array = (image_array - mean) / std
+    
+    # 6. To Tensor dan Tambahkan Batch Dimension
     image_tensor = torch.from_numpy(image_array).unsqueeze(0) 
     
     return image_tensor
@@ -129,10 +137,10 @@ def postprocess_output(output_tensor):
         idx = preds_index[i]
         # Hapus Blank (0) dan Duplikasi
         if idx != 0 and (i == 0 or idx != preds_index[i-1]):
-            # Indeks karakter di CHAR_LIST adalah idx - 1 (karena idx 0 adalah Blank)
             raw_text.append(CHAR_LIST[idx - 1]) 
     
-    return "".join(raw_text)
+    # Model dilatih hanya untuk huruf kecil
+    return "".join(raw_text).lower()
 
 # ==============================================================================
 # 5. APLIKASI STREAMLIT UTAMA
