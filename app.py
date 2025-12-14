@@ -66,7 +66,7 @@ class ReconstructedOCRModel(nn.Module):
 def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn_layers):
     
     if not os.path.exists(local_path):
-        st.info("📦 Memulai unduhan model (80MB) dari Google Drive...")
+        st.info("📦 Memulai unduhan model ...")
         try:
             gdown.download(id=file_id, output=local_path, quiet=False)
             st.success("✅ Model berhasil diunduh ke disk lokal.")
