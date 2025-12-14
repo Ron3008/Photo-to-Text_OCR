@@ -11,11 +11,11 @@ import os
 # 1. KONFIGURASI DAN HYPERPARAMETER KRITIS
 # ==============================================================================
 
-# HARUS DIGANTI: FILE ID GOOGLE DRIVE Anda
+# GANTI DENGAN ID FILE BOBOT MODEL ANDA
 DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-' 
 MODEL_PATH_LOCAL = 'OCR_model_downloaded.pth' 
 
-# CHAR_LIST berdasarkan Colab (36 karakter: 0-9 dan a-z)
+# CHAR_LIST (36 karakter: 0-9 dan a-z, sesuai size mismatch 37 kelas)
 CHAR_LIST = "0123456789abcdefghijklmnopqrstuvwxyz" 
 
 OUTPUT_CLASSES = len(CHAR_LIST) + 1 
@@ -23,7 +23,7 @@ HIDDEN_SIZE = 256
 RNN_LAYERS = 2     
 
 # ==============================================================================
-# 2. DEFINISI ARSITEKTUR MODEL (FINAL)
+# 2. DEFINISI ARSITEKTUR MODEL
 # ==============================================================================
 
 class ReconstructedOCRModel(nn.Module):
@@ -34,7 +34,7 @@ class ReconstructedOCRModel(nn.Module):
         self.cnn = mobilenet.features 
         
         first_conv = self.cnn[0][0]
-        # Input CNN diatur ke 3 channel (karena di Colab menggunakan transforms.Grayscale(num_output_channels=3))
+        # Input CNN 3 channel (sesuai preprocessing Colab: Grayscale -> 3 Channel)
         self.cnn[0][0] = nn.Conv2d(3, first_conv.out_channels, 
                                    kernel_size=first_conv.kernel_size, 
                                    stride=first_conv.stride, 
@@ -43,7 +43,7 @@ class ReconstructedOCRModel(nn.Module):
         
         C_out = mobilenet.last_channel 
         
-        # Memisahkan LSTM dan Linear untuk mencocokkan nama key 'rnn' dan 'fc' di checkpoint
+        # Penamaan layer: 'rnn' dan 'fc' (sesuai state_dict)
         self.rnn = nn.LSTM(C_out, hidden_size, rnn_layers, bidirectional=True, batch_first=False)
         self.fc = nn.Linear(2 * hidden_size, num_classes)
 
@@ -61,7 +61,7 @@ class ReconstructedOCRModel(nn.Module):
         return output
 
 # ==============================================================================
-# 3. FUNGSI PEMUATAN MODEL DENGAN DOWNLOAD EXTERNAL
+# 3. FUNGSI PEMUATAN MODEL DENGAN ERROR HANDLING
 # ==============================================================================
 
 @st.cache_resource
@@ -88,42 +88,45 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
              state_dict = state_dict['model_state'] 
         
         model.load_state_dict(state_dict, strict=True) 
+        
+        # SOLUSI FINAL ANTI-ERROR TIPE DATA: Paksa seluruh model ke Double (float64)
+        model.double() 
+        
         model.eval() 
         st.success("🎉 Model berhasil dimuat dan siap digunakan!")
         return model
         
     except Exception as e:
         st.error(f"❌ Gagal memuat arsitektur model. Error: {e}")
-        st.warning("Periksa ulang: CHAR_LIST (Output Classes), HIDDEN_SIZE, dan RNN_LAYERS.")
+        st.warning("Periksa ulang: CHAR_LIST, HIDDEN_SIZE, RNN_LAYERS, atau ID file.")
         return None
 
 # ==============================================================================
-# 4. FUNGSI UTILITY (PRE/POST-PROCESSING FINAL)
+# 4. FUNGSI UTILITY (PRE/POST-PROCESSING)
 # ==============================================================================
 
 def preprocess_image(image: Image.Image):
-    # KOREKSI: Gunakan Dimensi Colab (W=256)
+    # Dimensi Colab
     target_width = 256
     target_height = 32
     
-    # 1. Resize
     image = image.resize((target_width, target_height))
     
-    # 2. Grayscale lalu ubah ke RGB (sesuai transforms.Grayscale(num_output_channels=3) di Colab)
+    # Grayscale -> RGB (sesuai transforms.Grayscale(num_output_channels=3) di Colab)
     image = image.convert('L').convert('RGB')
     
-    # 3. To NumPy Array dan Normalisasi (RGB: H, W, C)
+    # To NumPy Array (Float32) dan Normalisasi / 255.0
     image_array = np.array(image, dtype=np.float32) / 255.0 
     
-    # 4. Transpose ke PyTorch (C, H, W)
+    # Transpose ke PyTorch (C, H, W)
     image_array = image_array.transpose((2, 0, 1)) 
     
-    # 5. Normalisasi ke [-1, 1] (sesuai transforms.Normalize(mean=0.5, std=0.5) di Colab)
+    # Normalisasi ke [-1, 1] (sesuai transforms.Normalize(mean=0.5, std=0.5) di Colab)
     mean = np.array([0.5, 0.5, 0.5]).reshape(-1, 1, 1)
     std = np.array([0.5, 0.5, 0.5]).reshape(-1, 1, 1)
     image_array = (image_array - mean) / std
     
-    # 6. To Tensor dan Tambahkan Batch Dimension
+    # To Tensor dan Tambahkan Batch Dimension, paksa Double
     image_tensor = torch.from_numpy(image_array).unsqueeze(0).double() 
     
     return image_tensor
@@ -136,11 +139,10 @@ def postprocess_output(output_tensor):
     raw_text = []
     for i in range(len(preds_index)):
         idx = preds_index[i]
-        # Hapus Blank (0) dan Duplikasi
+        # Hapus Blank (0) dan Duplikasi (CTC Greedy Decoding)
         if idx != 0 and (i == 0 or idx != preds_index[i-1]):
             raw_text.append(CHAR_LIST[idx - 1]) 
     
-    # Model dilatih hanya untuk huruf kecil
     return "".join(raw_text).lower()
 
 # ==============================================================================
@@ -149,7 +151,6 @@ def postprocess_output(output_tensor):
 
 st.set_page_config(page_title="MobileNet+CRNN OCR", layout="wide")
 st.title("📖 Word-level OCR Deployment (MobileNet + CRNN)")
-st.markdown("Aplikasi untuk menguji model Word-level OCR.")
 st.divider()
 
 model = load_model_and_weights(
@@ -177,7 +178,7 @@ if model:
             
             st.markdown("---")
             if st.button('🚀 Jalankan OCR', type="primary", use_container_width=True):
-                with st.spinner('Memproses gambar dan menjalankan model di CPU...'):
+                with st.spinner('Memproses gambar dan menjalankan model...'):
                     try:
                         input_tensor = preprocess_image(image)
                         
@@ -210,4 +211,4 @@ if model:
 
 
 else:
-    st.warning("Aplikasi menunggu model dimuat dari Drive. Cek log konsol jika proses terhenti.")
+    st.warning("Aplikasi menunggu model dimuat. Cek log konsol.")
