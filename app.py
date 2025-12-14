@@ -124,7 +124,7 @@ def preprocess_image(image: Image.Image):
     image_array = (image_array - mean) / std
     
     # 6. To Tensor dan Tambahkan Batch Dimension
-    image_tensor = torch.from_numpy(image_array).unsqueeze(0) 
+    image_tensor = torch.from_numpy(image_array).unsqueeze(0).double() 
     
     return image_tensor
 
