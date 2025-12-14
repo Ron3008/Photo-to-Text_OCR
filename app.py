@@ -10,17 +10,18 @@ import os
 # ==============================================================================
 # 1. KONFIGURASI DAN HYPERPARAMETER KRITIS
 # ==============================================================================
-DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-'  
+DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-' 
 MODEL_PATH_LOCAL = 'OCR_model_downloaded.pth' 
 
+# HARUS DIVALIDASI: 36 Karakter Unik (sesuai size mismatch 37 kelas)
 CHAR_LIST = "0123456789abcdefghijklmnopqrstuvwxyz" 
 
-OUTPUT_CLASSES = len(CHAR_LIST) + 1
+OUTPUT_CLASSES = len(CHAR_LIST) + 1 
 HIDDEN_SIZE = 256  
 RNN_LAYERS = 2     
 
 # ==============================================================================
-# 2. DEFINISI ARSITEKTUR MODEL (REKONSTRUKSI)
+# 2. DEFINISI ARSITEKTUR MODEL (REKONSTRUKSI FINAL)
 # ==============================================================================
 
 class ReconstructedOCRModel(nn.Module):
@@ -30,8 +31,8 @@ class ReconstructedOCRModel(nn.Module):
         mobilenet = models.mobilenet_v2(weights=None)
         self.cnn = mobilenet.features 
         
+        # KOREKSI: Input CNN diatur ke 3 channel (RGB)
         first_conv = self.cnn[0][0]
-        # KOREKSI 1: UBAH INPUT CHANNEL DARI 1 KE 3 (RGB)
         self.cnn[0][0] = nn.Conv2d(3, first_conv.out_channels, 
                                    kernel_size=first_conv.kernel_size, 
                                    stride=first_conv.stride, 
@@ -40,9 +41,9 @@ class ReconstructedOCRModel(nn.Module):
         
         C_out = mobilenet.last_channel 
         
-        # KOREKSI 2a: PISAHKAN LAPISAN RNN DAN LINEAR (Gunakan nama 'fc')
+        # KOREKSI: Memisahkan LSTM dan Linear untuk mencocokkan nama key 'rnn' dan 'fc'
         self.rnn = nn.LSTM(C_out, hidden_size, rnn_layers, bidirectional=True, batch_first=False)
-        self.fc = nn.Linear(2 * hidden_size, num_classes)
+        self.fc = nn.Linear(2 * hidden_size, num_classes) # Nama 'fc' mencocokkan state_dict
 
     def forward(self, x):
         x = self.cnn(x) 
@@ -52,21 +53,20 @@ class ReconstructedOCRModel(nn.Module):
         x = x.view(B, W, C * H)
         x = x.permute(1, 0, 2)
         
-        # KOREKSI 2b: PANGGIL LAPISAN SECARA TERPISAH
         recurrent_features, _ = self.rnn(x)
-        output = self.fc(recurrent_features)
+        output = self.fc(recurrent_features) # Memanggil lapisan 'fc'
         
         return output
 
 # ==============================================================================
-# 3. FUNGSI PEMUATAN MODEL DENGAN DOWNLOAD EXTERNAL
+# 3. FUNGSI PEMUATAN MODEL DENGAN DOWNLOAD EXTERNAL DAN EKSTRAKSI STATE_DICT
 # ==============================================================================
 
 @st.cache_resource
 def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn_layers):
     
     if not os.path.exists(local_path):
-        st.info("📦 Memulai unduhan model ...")
+        st.info("📦 Memulai unduhan model dari Google Drive...")
         try:
             gdown.download(id=file_id, output=local_path, quiet=False)
             st.success("✅ Model berhasil diunduh ke disk lokal.")
@@ -79,8 +79,10 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
     model = ReconstructedOCRModel(output_classes, hidden_size, rnn_layers) 
     
     try:
+        # Muat seluruh dictionary checkpoint
         state_dict = torch.load(local_path, map_location=torch.device('cpu'))
         
+        # KOREKSI: Ekstraksi bobot dari sub-key 'model_state' (sesuai kode Colab Anda)
         if 'model_state' in state_dict:
              state_dict = state_dict['model_state'] 
         
@@ -91,24 +93,30 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
         
     except Exception as e:
         st.error(f"❌ Gagal memuat arsitektur model. Error: {e}")
-        st.warning("Periksa HIDDEN_SIZE, RNN_LAYERS, atau versi MobileNet yang digunakan.")
+        st.warning("Periksa ulang: CHAR_LIST (Output Classes), HIDDEN_SIZE, dan RNN_LAYERS.")
         return None
 
 # ==============================================================================
 # 4. FUNGSI UTILITY (PRE/POST-PROCESSING)
 # ==============================================================================
+
 def preprocess_image(image: Image.Image):
     target_width = 128
     target_height = 32
     
-    # HAPUS .convert('L') di sini agar tetap RGB (3 Channel)
+    # 1. Resize (sesuai saat training)
     image = image.resize((target_width, target_height))
     
-    # Ubah dari (W, H, C) ke (C, W, H)
-    image_array = np.array(image, dtype=np.float32).transpose((2, 0, 1)) / 255.0 
+    # 2. To NumPy Array dan Normalisasi (RGB: H, W, C)
+    image_array = np.array(image, dtype=np.float32) / 255.0 
     
-    # [1, 3, H, W] -> Batch, Channel, Height, Width
+    # 3. Transpose ke PyTorch (C, H, W)
+    image_array = image_array.transpose((2, 0, 1)) 
+    
+    # 4. To Tensor dan Tambahkan Batch Dimension
+    # Output: [1, C=3, H=32, W=128]
     image_tensor = torch.from_numpy(image_array).unsqueeze(0) 
+    
     return image_tensor
 
 def postprocess_output(output_tensor):
@@ -119,7 +127,9 @@ def postprocess_output(output_tensor):
     raw_text = []
     for i in range(len(preds_index)):
         idx = preds_index[i]
+        # Hapus Blank (0) dan Duplikasi
         if idx != 0 and (i == 0 or idx != preds_index[i-1]):
+            # Indeks karakter di CHAR_LIST adalah idx - 1 (karena idx 0 adalah Blank)
             raw_text.append(CHAR_LIST[idx - 1]) 
     
     return "".join(raw_text)
@@ -130,7 +140,7 @@ def postprocess_output(output_tensor):
 
 st.set_page_config(page_title="MobileNet+CRNN OCR", layout="wide")
 st.title("📖 Word-level OCR Deployment (MobileNet + CRNN)")
-st.markdown("Aplikasi untuk menguji model Word-level OCR dengan arsitektur MobileNet dan CTC Decode, model dimuat dari Google Drive.")
+st.markdown("Aplikasi untuk menguji model Word-level OCR.")
 st.divider()
 
 model = load_model_and_weights(
@@ -190,4 +200,4 @@ if model:
 
 
 else:
-    st.warning("Aplikasi menunggu model dimuat dari Drive. Cek log konsol jika proses terhenti.")
+    st.warning("Aplikasi menunggu model dimuat dari Drive. Cek log konsol jika proses terhenti atau terjadi error arsitektur.")
