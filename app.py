@@ -10,7 +10,6 @@ import os
 # ==============================================================================
 # 1. KONFIGURASI DAN HYPERPARAMETER KRITIS
 # ==============================================================================
-
 DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-'  
 MODEL_PATH_LOCAL = 'OCR_model_downloaded.pth' 
 
