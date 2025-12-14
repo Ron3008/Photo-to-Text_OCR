@@ -31,7 +31,8 @@ class ReconstructedOCRModel(nn.Module):
         self.cnn = mobilenet.features 
         
         first_conv = self.cnn[0][0]
-        self.cnn[0][0] = nn.Conv2d(1, first_conv.out_channels, 
+        # KOREKSI 1: UBAH INPUT CHANNEL DARI 1 KE 3 (RGB)
+        self.cnn[0][0] = nn.Conv2d(3, first_conv.out_channels, 
                                    kernel_size=first_conv.kernel_size, 
                                    stride=first_conv.stride, 
                                    padding=first_conv.padding, 
@@ -39,10 +40,9 @@ class ReconstructedOCRModel(nn.Module):
         
         C_out = mobilenet.last_channel 
         
-        self.rnn = nn.Sequential(
-            nn.LSTM(C_out, hidden_size, rnn_layers, bidirectional=True, batch_first=False),
-            nn.Linear(2 * hidden_size, num_classes)
-        )
+        # KOREKSI 2a: PISAHKAN LAPISAN RNN DAN LINEAR (Gunakan nama 'fc')
+        self.rnn = nn.LSTM(C_out, hidden_size, rnn_layers, bidirectional=True, batch_first=False)
+        self.fc = nn.Linear(2 * hidden_size, num_classes)
 
     def forward(self, x):
         x = self.cnn(x) 
@@ -52,8 +52,9 @@ class ReconstructedOCRModel(nn.Module):
         x = x.view(B, W, C * H)
         x = x.permute(1, 0, 2)
         
-        recurrent_features, _ = self.rnn[0](x)
-        output = self.rnn[1](recurrent_features)
+        # KOREKSI 2b: PANGGIL LAPISAN SECARA TERPISAH
+        recurrent_features, _ = self.rnn(x)
+        output = self.fc(recurrent_features)
         
         return output
 
@@ -96,16 +97,18 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
 # ==============================================================================
 # 4. FUNGSI UTILITY (PRE/POST-PROCESSING)
 # ==============================================================================
-
 def preprocess_image(image: Image.Image):
     target_width = 128
     target_height = 32
     
-    image = image.convert('L') 
+    # HAPUS .convert('L') di sini agar tetap RGB (3 Channel)
     image = image.resize((target_width, target_height))
     
-    image_array = np.array(image, dtype=np.float32) / 255.0
-    image_tensor = torch.from_numpy(image_array).unsqueeze(0).unsqueeze(0) 
+    # Ubah dari (W, H, C) ke (C, W, H)
+    image_array = np.array(image, dtype=np.float32).transpose((2, 0, 1)) / 255.0 
+    
+    # [1, 3, H, W] -> Batch, Channel, Height, Width
+    image_tensor = torch.from_numpy(image_array).unsqueeze(0) 
     return image_tensor
 
 def postprocess_output(output_tensor):
