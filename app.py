@@ -3,31 +3,32 @@ from PIL import Image
 import torch
 import torch.nn as nn
 import numpy as np
-import torchvision.models as models # Digunakan untuk MobileNet
+import torchvision.models as models 
+import gdown
+import os
 
-# --- Konfigurasi Model dan Hyperparameter ---
+# ==============================================================================
+# 1. KONFIGURASI DAN HYPERPARAMETER KRITIS
+# ==============================================================================
 
-MODEL_PATH = 'OCR_model.pth' 
+DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-'  
+MODEL_PATH_LOCAL = 'OCR_model_downloaded.pth' 
 
-# GANTI INI DENGAN KAMUS KARAKTER ASLI ANDA
-# Ini adalah tebakan umum. Sesuaikan jika model Anda punya karakter khusus (misal: aksara, simbol)
 CHAR_LIST = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.,!?'-:;()[]{}*&^%$#@~`|+=\\/" 
 
-# +1 untuk CTC 'Blank' token. Ini WAJIB.
 OUTPUT_CLASSES = len(CHAR_LIST) + 1 
-HIDDEN_SIZE = 256  # Tebakan umum untuk LSTM hidden size. Sesuaikan jika Anda tahu nilai pastinya.
-RNN_LAYERS = 2     # Tebakan umum jumlah layer LSTM. Sesuaikan jika Anda tahu nilai pastinya.
+HIDDEN_SIZE = 256  
+RNN_LAYERS = 2     
 
-# --- Definisi Arsitektur Model (REKONSTRUKSI) ---
-# Berdasarkan informasi: MobileNet + CRNN + CTC
+# ==============================================================================
+# 2. DEFINISI ARSITEKTUR MODEL (REKONSTRUKSI)
+# ==============================================================================
 
 class ReconstructedOCRModel(nn.Module):
     def __init__(self, num_classes, hidden_size, rnn_layers):
         super(ReconstructedOCRModel, self).__init__()
         
-        # 1. CNN Backbone: MobileNet (Digunakan sebagai fitur ekstraktor)
         mobilenet = models.mobilenet_v2(weights=None)
-        
         self.cnn = mobilenet.features 
         
         first_conv = self.cnn[0][0]
@@ -37,75 +38,82 @@ class ReconstructedOCRModel(nn.Module):
                                    padding=first_conv.padding, 
                                    bias=first_conv.bias is not None)
         
-        # 2. Sequential Layer untuk menyesuaikan output CNN ke RNN
         C_out = mobilenet.last_channel 
         
-        # 3. RNN (LSTM)
         self.rnn = nn.Sequential(
             nn.LSTM(C_out, hidden_size, rnn_layers, bidirectional=True, batch_first=False),
-            nn.Linear(2 * hidden_size, num_classes) # *2 karena Bidirectional
+            nn.Linear(2 * hidden_size, num_classes)
         )
 
     def forward(self, x):
-        # 1. CNN
         x = self.cnn(x) 
         
-        # 2. Ubah Feature Map menjadi Sequence untuk RNN
         B, C, H, W = x.size()
+        x = x.permute(0, 3, 1, 2)
+        x = x.view(B, W, C * H)
+        x = x.permute(1, 0, 2)
         
-        x = x.permute(0, 3, 1, 2)    
-        x = x.view(B, W, C * H)      
-        x = x.permute(1, 0, 2)       
-        
-        # 3. RNN/LSTM dan Linear
         recurrent_features, _ = self.rnn[0](x)
         output = self.rnn[1](recurrent_features)
         
         return output
 
-# --- Fungsi Pemuatan Model dan Utility ---
+# ==============================================================================
+# 3. FUNGSI PEMUATAN MODEL DENGAN DOWNLOAD EXTERNAL
+# ==============================================================================
 
 @st.cache_resource
-def load_model(path):
-    model = ReconstructedOCRModel(OUTPUT_CLASSES, HIDDEN_SIZE, RNN_LAYERS) 
+def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn_layers):
+    
+    if not os.path.exists(local_path):
+        st.info("📦 Memulai unduhan model (80MB) dari Google Drive...")
+        try:
+            gdown.download(id=file_id, output=local_path, quiet=False)
+            st.success("✅ Model berhasil diunduh ke disk lokal.")
+        except Exception as e:
+            st.error(f"❌ Gagal mengunduh model dari Google Drive. Error: {e}")
+            return None
+    else:
+        st.info("📂 File model sudah ada di disk. Melanjutkan ke pemuatan.")
+
+    model = ReconstructedOCRModel(output_classes, hidden_size, rnn_layers) 
     
     try:
-        state_dict = torch.load(path, map_location=torch.device('cpu'))
+        state_dict = torch.load(local_path, map_location=torch.device('cpu'))
         
         if 'model_state' in state_dict:
              state_dict = state_dict['model_state'] 
         
         model.load_state_dict(state_dict, strict=True) 
         model.eval() 
+        st.success("🎉 Model berhasil dimuat dan siap digunakan!")
         return model
+        
     except Exception as e:
-        st.error(f"Gagal memuat model. Silakan periksa arsitektur `ReconstructedOCRModel` dan hyperparameter (HIDDEN_SIZE/RNN_LAYERS). Error: {e}")
+        st.error(f"❌ Gagal memuat arsitektur model. Error: {e}")
+        st.warning("Periksa HIDDEN_SIZE, RNN_LAYERS, atau versi MobileNet yang digunakan.")
         return None
+
+# ==============================================================================
+# 4. FUNGSI UTILITY (PRE/POST-PROCESSING)
+# ==============================================================================
 
 def preprocess_image(image: Image.Image):
     target_width = 128
     target_height = 32
     
-    image = image.convert('L') # Grayscale (1 Channel)
+    image = image.convert('L') 
     image = image.resize((target_width, target_height))
     
     image_array = np.array(image, dtype=np.float32) / 255.0
     image_tensor = torch.from_numpy(image_array).unsqueeze(0).unsqueeze(0) 
     return image_tensor
 
-# Fungsi Postprocessing (CTC Greedy Decode)
 def postprocess_output(output_tensor):
-    """
-    Melakukan CTC Greedy Decoding (mengubah output tensor menjadi string teks).
-    """
-    # 1. Ubah ke probabilitas
-    probs = output_tensor.softmax(2) 
+    probs = output_tensor.softmax(2)
+    _, preds_index = probs.max(2)
+    preds_index = preds_index.squeeze(1).tolist()
     
-    # 2. Ambil indeks dengan probabilitas tertinggi di setiap step (Greedy)
-    _, preds_index = probs.max(2) 
-    preds_index = preds_index.squeeze(1).tolist() # [Sequence Length]
-    
-    # 3. Decode: Hapus duplikasi dan Blank token (Indeks 0)
     raw_text = []
     for i in range(len(preds_index)):
         idx = preds_index[i]
@@ -114,15 +122,22 @@ def postprocess_output(output_tensor):
     
     return "".join(raw_text)
 
-
-# --- Aplikasi Streamlit Utama ---
+# ==============================================================================
+# 5. APLIKASI STREAMLIT UTAMA
+# ==============================================================================
 
 st.set_page_config(page_title="MobileNet+CRNN OCR", layout="wide")
 st.title("📖 Word-level OCR Deployment (MobileNet + CRNN)")
-st.markdown("Aplikasi untuk menguji model Word-level OCR dengan arsitektur MobileNet dan CTC Decode.")
+st.markdown("Aplikasi untuk menguji model Word-level OCR dengan arsitektur MobileNet dan CTC Decode, model dimuat dari Google Drive.")
 st.divider()
 
-model = load_model(MODEL_PATH)
+model = load_model_and_weights(
+    DRIVE_FILE_ID, 
+    MODEL_PATH_LOCAL, 
+    OUTPUT_CLASSES, 
+    HIDDEN_SIZE, 
+    RNN_LAYERS
+)
 
 if model:
     col1, col2 = st.columns([1, 1.5])
@@ -154,7 +169,6 @@ if model:
 
                     except Exception as e:
                         st.error(f"Terjadi kesalahan saat inferensi: {e}")
-                        st.info("Pastikan fungsi `preprocess_image` sudah menggunakan dimensi input yang benar.")
 
     with col2:
         st.subheader("Hasil OCR")
@@ -169,9 +183,9 @@ if model:
             </div>
             """, unsafe_allow_html=True)
             
-        elif 'processed' not in st.session_state and uploaded_file is None:
+        elif uploaded_file is None:
              st.info("Silakan unggah gambar di sebelah kiri dan klik 'Jalankan OCR'.")
 
 
 else:
-    st.warning("Model belum dapat dimuat. Silakan periksa konsol untuk pesan error dari PyTorch.")
+    st.warning("Aplikasi menunggu model dimuat dari Drive. Cek log konsol jika proses terhenti.")
