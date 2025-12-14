@@ -13,9 +13,9 @@ import os
 DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-'  
 MODEL_PATH_LOCAL = 'OCR_model_downloaded.pth' 
 
-CHAR_LIST = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.,!?'-:;()[]{}*&^%$#@~`|+=\\/" 
+CHAR_LIST = "0123456789abcdefghijklmnopqrstuvwxyz" 
 
-OUTPUT_CLASSES = len(CHAR_LIST) + 1 
+OUTPUT_CLASSES = len(CHAR_LIST) + 1
 HIDDEN_SIZE = 256  
 RNN_LAYERS = 2     
 
