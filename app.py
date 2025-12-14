@@ -10,10 +10,12 @@ import os
 # ==============================================================================
 # 1. KONFIGURASI DAN HYPERPARAMETER KRITIS
 # ==============================================================================
+
+# HARUS DIGANTI: FILE ID GOOGLE DRIVE Anda
 DRIVE_FILE_ID = '1j8bnvJhnDB4N0bzn2CmBQQqXj05LpG6-' 
 MODEL_PATH_LOCAL = 'OCR_model_downloaded.pth' 
 
-# HARUS DIVALIDASI: 36 Karakter Unik (sesuai size mismatch 37 kelas)
+# CHAR_LIST berdasarkan Colab (36 karakter: 0-9 dan a-z)
 CHAR_LIST = "0123456789abcdefghijklmnopqrstuvwxyz" 
 
 OUTPUT_CLASSES = len(CHAR_LIST) + 1 
@@ -21,7 +23,7 @@ HIDDEN_SIZE = 256
 RNN_LAYERS = 2     
 
 # ==============================================================================
-# 2. DEFINISI ARSITEKTUR MODEL (REKONSTRUKSI FINAL)
+# 2. DEFINISI ARSITEKTUR MODEL (FINAL)
 # ==============================================================================
 
 class ReconstructedOCRModel(nn.Module):
@@ -31,8 +33,8 @@ class ReconstructedOCRModel(nn.Module):
         mobilenet = models.mobilenet_v2(weights=None)
         self.cnn = mobilenet.features 
         
-        # KOREKSI: Input CNN diatur ke 3 channel (RGB)
         first_conv = self.cnn[0][0]
+        # Input CNN diatur ke 3 channel (karena di Colab menggunakan transforms.Grayscale(num_output_channels=3))
         self.cnn[0][0] = nn.Conv2d(3, first_conv.out_channels, 
                                    kernel_size=first_conv.kernel_size, 
                                    stride=first_conv.stride, 
@@ -41,9 +43,9 @@ class ReconstructedOCRModel(nn.Module):
         
         C_out = mobilenet.last_channel 
         
-        # KOREKSI: Memisahkan LSTM dan Linear untuk mencocokkan nama key 'rnn' dan 'fc'
+        # Memisahkan LSTM dan Linear untuk mencocokkan nama key 'rnn' dan 'fc' di checkpoint
         self.rnn = nn.LSTM(C_out, hidden_size, rnn_layers, bidirectional=True, batch_first=False)
-        self.fc = nn.Linear(2 * hidden_size, num_classes) # Nama 'fc' mencocokkan state_dict
+        self.fc = nn.Linear(2 * hidden_size, num_classes)
 
     def forward(self, x):
         x = self.cnn(x) 
@@ -54,12 +56,12 @@ class ReconstructedOCRModel(nn.Module):
         x = x.permute(1, 0, 2)
         
         recurrent_features, _ = self.rnn(x)
-        output = self.fc(recurrent_features) # Memanggil lapisan 'fc'
+        output = self.fc(recurrent_features)
         
         return output
 
 # ==============================================================================
-# 3. FUNGSI PEMUATAN MODEL DENGAN DOWNLOAD EXTERNAL DAN EKSTRAKSI STATE_DICT
+# 3. FUNGSI PEMUATAN MODEL DENGAN DOWNLOAD EXTERNAL
 # ==============================================================================
 
 @st.cache_resource
@@ -79,10 +81,9 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
     model = ReconstructedOCRModel(output_classes, hidden_size, rnn_layers) 
     
     try:
-        # Muat seluruh dictionary checkpoint
         state_dict = torch.load(local_path, map_location=torch.device('cpu'))
         
-        # KOREKSI: Ekstraksi bobot dari sub-key 'model_state' (sesuai kode Colab Anda)
+        # Ekstraksi bobot dari sub-key 'model_state' (sesuai kode Colab Anda)
         if 'model_state' in state_dict:
              state_dict = state_dict['model_state'] 
         
@@ -97,7 +98,7 @@ def load_model_and_weights(file_id, local_path, output_classes, hidden_size, rnn
         return None
 
 # ==============================================================================
-# 4. FUNGSI UTILITY (PRE/POST-PROCESSING)
+# 4. FUNGSI UTILITY (PRE/POST-PROCESSING FINAL)
 # ==============================================================================
 
 def preprocess_image(image: Image.Image):
