@@ -164,6 +164,7 @@ if model:
     
     with col1:
         st.subheader("Unggah Gambar")
+        st.markdown("**(Disarankan: Unggah gambar kata tunggal yang sudah di-*crop* untuk hasil terbaik)**")
         uploaded_file = st.file_uploader(
             "Pilih gambar kata (.jpg, .png)", 
             type=["jpg", "png", "jpeg"]
@@ -208,4 +209,4 @@ if model:
 
 
 else:
-    st.warning("Aplikasi menunggu model dimuat dari Drive. Cek log konsol jika proses terhenti atau terjadi error arsitektur.")
+    st.warning("Aplikasi menunggu model dimuat dari Drive. Cek log konsol jika proses terhenti.")
